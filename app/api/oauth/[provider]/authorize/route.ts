@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import {
-  getOAuthConfig,
+  getClient,
+  getAuthorizationServer,
+  getProviderConfig,
   generateState,
-  generatePKCE,
+  generateCodeVerifier,
+  calculateCodeChallenge,
   Provider,
+  isValidProvider,
 } from "@/lib/oauth-config";
 
 export async function GET(
@@ -13,47 +17,67 @@ export async function GET(
   const { provider } = await params;
 
   // Validate provider
-  if (provider !== "supabase" && provider !== "github") {
+  if (!isValidProvider(provider)) {
     return NextResponse.json({ error: "Invalid provider" }, { status: 400 });
   }
 
-  const config = getOAuthConfig(provider as Provider);
+  const client = getClient(provider as Provider);
+  const authorizationServer = getAuthorizationServer(provider as Provider);
+  const providerConfig = getProviderConfig(provider as Provider);
+
   const state = generateState();
-  const authorizationUrl = new URL(config.authorizationEndpoint);
+  const authorizationUrl = new URL(authorizationServer.authorization_endpoint!);
 
-  authorizationUrl.searchParams.set("client_id", config.clientId);
-  authorizationUrl.searchParams.set("redirect_uri", config.redirectUri);
-  authorizationUrl.searchParams.set("response_type", "code");
-  authorizationUrl.searchParams.set("state", state);
+  const params_map = new URLSearchParams();
+  params_map.set("client_id", client.client_id);
+  params_map.set("redirect_uri", providerConfig.redirectUri);
+  params_map.set("response_type", "code");
+  params_map.set("state", state);
 
-  if (config.scope) {
-    authorizationUrl.searchParams.set("scope", config.scope);
+  if (providerConfig.scope) {
+    params_map.set("scope", providerConfig.scope);
   }
 
   // Handle PKCE if required
   let codeVerifier: string | undefined;
-  if (config.usePKCE) {
-    const pkce = await generatePKCE();
-    codeVerifier = pkce.codeVerifier;
-    authorizationUrl.searchParams.set("code_challenge", pkce.codeChallenge);
-    authorizationUrl.searchParams.set("code_challenge_method", "S256");
+  if (providerConfig.usePKCE) {
+    codeVerifier = generateCodeVerifier();
+    const codeChallenge = await calculateCodeChallenge(codeVerifier);
+    params_map.set("code_challenge", codeChallenge);
+    params_map.set("code_challenge_method", "S256");
   }
+
+  authorizationUrl.search = params_map.toString();
+
+  console.log("Redirecting to authorization URL:", authorizationUrl.toString());
 
   const response = NextResponse.redirect(authorizationUrl);
 
   // Store state in cookies
-  response.cookies.set(`${config.cookiePrefix}oauth_state`, state, {
+  response.cookies.set(`${providerConfig.cookiePrefix}oauth_state`, state, {
     httpOnly: true,
     secure: true,
+    sameSite: "lax",
   });
 
   // Store PKCE code verifier if used
   if (codeVerifier) {
-    response.cookies.set(`${config.cookiePrefix}code_verifier`, codeVerifier, {
-      httpOnly: true,
-      secure: true,
-    });
+    response.cookies.set(
+      `${providerConfig.cookiePrefix}code_verifier`,
+      codeVerifier,
+      {
+        httpOnly: true,
+        secure: true,
+        sameSite: "lax",
+      }
+    );
   }
+
+  console.log(
+    "[/oauth/[provider]/authorize] Set cookies for state and code_verifier"
+  );
+  console.log("State cookie:", state);
+  console.log("Code Verifier cookie:", codeVerifier);
 
   return response;
 }

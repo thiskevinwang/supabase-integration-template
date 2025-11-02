@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { OAuthClient } from "@/lib/oauth-client";
-import { Provider } from "@/lib/oauth-config";
+import { Provider, isValidProvider } from "@/lib/oauth-config";
 
 /**
  * GET /api/oauth/[provider]/userinfo
@@ -14,7 +14,7 @@ export async function GET(
   const { provider } = await params;
 
   // Validate provider
-  if (provider !== "supabase" && provider !== "github") {
+  if (!isValidProvider(provider)) {
     return NextResponse.json({ error: "Invalid provider" }, { status: 400 });
   }
 

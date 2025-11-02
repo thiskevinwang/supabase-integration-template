@@ -1,60 +1,157 @@
+"server-only";
 import * as oauth from "oauth4webapi";
 
-export type Provider = "supabase" | "github";
+export type Provider = "supabase" | "github" | "clerk" | "google";
 
-interface OAuthConfig {
-  clientId: string;
-  clientSecret: string;
+export const VALID_PROVIDERS = [
+  "supabase",
+  "github",
+  "clerk",
+  "google",
+] as const;
+
+export function isValidProvider(provider: string): provider is Provider {
+  return VALID_PROVIDERS.includes(provider as Provider);
+}
+
+/**
+ * Extended configuration for provider-specific settings
+ */
+interface ProviderConfig {
   redirectUri: string;
-  /** OIDC Discovery */
-  oidcDiscoveryEndpoint?: string;
-  /** OAuth 2.0 Authorization Server Metadata (RFC 8414) */
-  authorizationServerMetadataEndpoint?: string;
-  authorizationEndpoint: string;
-  tokenEndpoint: string;
   scope?: string;
   usePKCE: boolean;
   cookiePrefix: string;
+  userInfoEndpoint?: string;
 }
 
-export function getOAuthConfig(provider: Provider): OAuthConfig {
+/**
+ * Get oauth4webapi Client configuration
+ */
+export function getClient(provider: Provider): oauth.Client {
   switch (provider) {
     case "supabase":
       return {
-        clientId: process.env.SUPABASE_CLIENT_ID!,
-        clientSecret: process.env.SUPABASE_CLIENT_SECRET!,
-        redirectUri: process.env.SUPABASE_REDIRECT_URI!,
-        authorizationServerMetadataEndpoint:
-          "https://api.supabase.com/.well-known/oauth-authorization-server",
-        authorizationEndpoint: "https://api.supabase.com/v1/oauth/authorize",
-        tokenEndpoint: "https://api.supabase.com/v1/oauth/token",
-        usePKCE: true,
-        cookiePrefix: "supabase_",
+        client_id: process.env.SUPABASE_CLIENT_ID!,
+        client_secret: process.env.SUPABASE_CLIENT_SECRET!,
+        token_endpoint_auth_method: "client_secret_basic",
       };
     case "github":
       return {
-        clientId: process.env.GITHUB_CLIENT_ID!,
-        clientSecret: process.env.GITHUB_CLIENT_SECRET!,
-        redirectUri: process.env.GITHUB_REDIRECT_URI!,
-        authorizationServerMetadataEndpoint:
-          "https://github.com/.well-known/oauth-authorization-server",
-        authorizationEndpoint: "https://github.com/login/oauth/authorize",
-        tokenEndpoint: "https://github.com/login/oauth/access_token",
-        scope: "read:user read:org",
-        usePKCE: false,
-        cookiePrefix: "github_",
+        client_id: process.env.GITHUB_CLIENT_ID!,
+        client_secret: process.env.GITHUB_CLIENT_SECRET!,
+        token_endpoint_auth_method: "client_secret_post",
+      };
+    case "clerk":
+      return {
+        client_id: process.env.CLERK_CLIENT_ID!,
+        client_secret: process.env.CLERK_CLIENT_SECRET!,
+        token_endpoint_auth_method: "client_secret_basic",
+      };
+    case "google":
+      return {
+        client_id: process.env.GOOGLE_CLIENT_ID!,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+        token_endpoint_auth_method: "client_secret_post",
       };
     default:
       throw new Error(`Unsupported provider: ${provider}`);
   }
 }
 
+/**
+ * Get oauth4webapi AuthorizationServer configuration
+ */
+export function getAuthorizationServer(
+  provider: Provider
+): oauth.AuthorizationServer {
+  switch (provider) {
+    case "supabase":
+      return {
+        issuer: process.env.SUPABASE_OAUTH_ISSUER!,
+        authorization_endpoint:
+          process.env.SUPABASE_OAUTH_AUTHORIZATION_ENDPOINT!,
+        token_endpoint: process.env.SUPABASE_OAUTH_TOKEN_ENDPOINT!,
+      };
+    case "github":
+      return {
+        issuer: process.env.GITHUB_OAUTH_ISSUER!,
+        authorization_endpoint:
+          process.env.GITHUB_OAUTH_AUTHORIZATION_ENDPOINT!,
+        token_endpoint: process.env.GITHUB_OAUTH_TOKEN_ENDPOINT!,
+      };
+    case "clerk":
+      return {
+        issuer: process.env.CLERK_OAUTH_ISSUER!,
+        authorization_endpoint: process.env.CLERK_OAUTH_AUTHORIZATION_ENDPOINT!,
+        token_endpoint: process.env.CLERK_OAUTH_TOKEN_ENDPOINT!,
+        userinfo_endpoint: process.env.CLERK_OAUTH_USERINFO_ENDPOINT,
+      };
+    case "google":
+      return {
+        issuer: process.env.GOOGLE_OAUTH_ISSUER!,
+        authorization_endpoint:
+          process.env.GOOGLE_OAUTH_AUTHORIZATION_ENDPOINT!,
+        token_endpoint: process.env.GOOGLE_OAUTH_TOKEN_ENDPOINT!,
+        userinfo_endpoint: process.env.GOOGLE_OAUTH_USERINFO_ENDPOINT,
+      };
+    default:
+      throw new Error(`Unsupported provider: ${provider}`);
+  }
+}
+
+/**
+ * Get provider-specific configuration
+ */
+export function getProviderConfig(provider: Provider): ProviderConfig {
+  switch (provider) {
+    case "supabase":
+      return {
+        redirectUri: process.env.SUPABASE_REDIRECT_URI!,
+        usePKCE: true,
+        cookiePrefix: "supabase_",
+        userInfoEndpoint: "https://api.supabase.com/v1/oauth/userinfo",
+      };
+    case "github":
+      return {
+        redirectUri: process.env.GITHUB_REDIRECT_URI!,
+        scope: "read:user read:org",
+        usePKCE: false,
+        cookiePrefix: "github_",
+        userInfoEndpoint: "https://api.github.com/user",
+      };
+    case "clerk":
+      return {
+        redirectUri: process.env.CLERK_REDIRECT_URI!,
+        scope: "email profile",
+        usePKCE: true,
+        cookiePrefix: "clerk_",
+      };
+    case "google":
+      return {
+        redirectUri: process.env.GOOGLE_REDIRECT_URI!,
+        scope: "openid email profile",
+        usePKCE: true,
+        cookiePrefix: "google_",
+      };
+    default:
+      throw new Error(`Unsupported provider: ${provider}`);
+  }
+}
+
+/**
+ * Utility functions using oauth4webapi
+ */
 export function generateState(): string {
   return oauth.generateRandomState();
 }
 
-export async function generatePKCE() {
-  const codeVerifier = oauth.generateRandomCodeVerifier();
-  const codeChallenge = await oauth.calculatePKCECodeChallenge(codeVerifier);
-  return { codeVerifier, codeChallenge };
+export function generateCodeVerifier(): string {
+  return oauth.generateRandomCodeVerifier();
+}
+
+export async function calculateCodeChallenge(
+  codeVerifier: string
+): Promise<string> {
+  return oauth.calculatePKCECodeChallenge(codeVerifier);
 }

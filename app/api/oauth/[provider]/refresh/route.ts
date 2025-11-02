@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { OAuthClient } from "@/lib/oauth-client";
-import { Provider, getOAuthConfig } from "@/lib/oauth-config";
+import {
+  Provider,
+  getProviderConfig,
+  isValidProvider,
+} from "@/lib/oauth-config";
 
 /**
  * POST /api/oauth/[provider]/refresh
@@ -14,17 +18,17 @@ export async function POST(
   const { provider } = await params;
 
   // Validate provider
-  if (provider !== "supabase" && provider !== "github") {
+  if (!isValidProvider(provider)) {
     return NextResponse.json({ error: "Invalid provider" }, { status: 400 });
   }
 
   try {
-    const config = getOAuthConfig(provider as Provider);
+    const providerConfig = getProviderConfig(provider as Provider);
     const cookieStore = await cookies();
 
     // Get refresh token from cookies
     const refreshToken = cookieStore.get(
-      `${config.cookiePrefix}refresh_token`
+      `${providerConfig.cookiePrefix}refresh_token`
     )?.value;
 
     if (!refreshToken) {
@@ -34,8 +38,8 @@ export async function POST(
       );
     }
 
-    // Refresh the access token
-    const newTokenData = await OAuthClient.refreshAccessToken(
+    // Refresh the access token using oauth4webapi
+    const tokenResponse = await OAuthClient.refreshAccessToken(
       provider as Provider,
       refreshToken
     );
@@ -47,21 +51,21 @@ export async function POST(
     });
 
     response.cookies.set(
-      `${config.cookiePrefix}access_token`,
-      newTokenData.access_token,
+      `${providerConfig.cookiePrefix}access_token`,
+      tokenResponse.access_token,
       {
         httpOnly: true,
         secure: true,
         sameSite: "lax",
-        maxAge: newTokenData.expires_in || 3600,
+        maxAge: tokenResponse.expires_in || 3600,
       }
     );
 
     // Update refresh token if a new one was provided
-    if (newTokenData.refresh_token) {
+    if (tokenResponse.refresh_token) {
       response.cookies.set(
-        `${config.cookiePrefix}refresh_token`,
-        newTokenData.refresh_token,
+        `${providerConfig.cookiePrefix}refresh_token`,
+        tokenResponse.refresh_token,
         {
           httpOnly: true,
           secure: true,

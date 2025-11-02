@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { OAuthClient } from "@/lib/oauth-client";
-import { Provider } from "@/lib/oauth-config";
+import {
+  Provider,
+  isValidProvider,
+  getProviderConfig,
+} from "@/lib/oauth-config";
 
 /**
  * GET /api/oauth/[provider]/token-info
- * Fetch token information for the authenticated provider
+ * Validate the access token for the authenticated provider
+ * Note: This endpoint validates by attempting to fetch user info
  */
 export async function GET(
   request: NextRequest,
@@ -14,15 +19,17 @@ export async function GET(
   const { provider } = await params;
 
   // Validate provider
-  if (provider !== "supabase" && provider !== "github") {
+  if (!isValidProvider(provider)) {
     return NextResponse.json({ error: "Invalid provider" }, { status: 400 });
   }
 
   try {
-    // Get access token from cookies
+    const providerConfig = getProviderConfig(provider as Provider);
     const cookieStore = await cookies();
+
+    // Get access token from cookies
     const accessToken = cookieStore.get(
-      provider === "supabase" ? "supabase_access_token" : "github_access_token"
+      `${providerConfig.cookiePrefix}access_token`
     )?.value;
 
     if (!accessToken) {
@@ -32,22 +39,23 @@ export async function GET(
       );
     }
 
-    // Create OAuth client and fetch token info
+    // Create OAuth client and validate token
     const client = new OAuthClient(provider as Provider, accessToken);
-    const tokenInfo = await client.getTokenInfo();
+    const isValid = await client.validateToken();
 
-    if (!tokenInfo) {
-      return NextResponse.json(
-        { error: "Token info not available for this provider" },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json(tokenInfo);
+    return NextResponse.json({
+      valid: isValid,
+      provider,
+      message: isValid ? "Token is valid" : "Token is invalid or expired",
+    });
   } catch (error) {
-    console.error(`Error fetching token info for ${provider}:`, error);
+    console.error(`Error validating token for ${provider}:`, error);
     return NextResponse.json(
-      { error: "Failed to fetch token information" },
+      {
+        valid: false,
+        provider,
+        error: "Failed to validate token",
+      },
       { status: 500 }
     );
   }

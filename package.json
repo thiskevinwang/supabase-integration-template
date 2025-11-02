@@ -19,6 +19,7 @@
     "oauth4webapi": "^3.8.2",
     "react": "19.2.0",
     "react-dom": "19.2.0",
+    "server-only": "^0.0.1",
     "supabase-management-js": "^1.0.0",
     "tailwind-merge": "^3.3.1"
   },

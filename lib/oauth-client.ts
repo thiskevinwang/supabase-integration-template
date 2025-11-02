@@ -1,18 +1,14 @@
-import { getOAuthConfig, Provider } from "./oauth-config";
-
-/**
- * Token information response from OAuth provider
- */
-export interface TokenInfo {
-  access_token: string;
-  token_type: string;
-  expires_in?: number;
-  refresh_token?: string;
-  scope?: string;
-}
+import * as oauth from "oauth4webapi";
+import {
+  getClient,
+  getAuthorizationServer,
+  getProviderConfig,
+  Provider,
+} from "./oauth-config";
 
 /**
  * Generic user info structure
+ * Keep this for convenience as oauth4webapi's UserInfoResponse is generic
  */
 export interface UserInfo {
   id: string;
@@ -24,111 +20,71 @@ export interface UserInfo {
 }
 
 /**
- * Token refresh response
- */
-export interface RefreshTokenResponse {
-  access_token: string;
-  token_type: string;
-  expires_in?: number;
-  refresh_token?: string;
-  scope?: string;
-}
-
-/**
- * Provider-specific endpoint configurations
- */
-interface ProviderEndpoints {
-  tokenInfo?: string;
-  userInfo: string;
-  refreshToken: string;
-}
-
-const PROVIDER_ENDPOINTS: Record<Provider, ProviderEndpoints> = {
-  supabase: {
-    tokenInfo: "https://api.supabase.com/v1/oauth/token/info",
-    userInfo: "https://api.supabase.com/v1/oauth/userinfo",
-    refreshToken: "https://api.supabase.com/v1/oauth/token",
-  },
-  github: {
-    userInfo: "https://api.github.com/user",
-    refreshToken: "https://github.com/login/oauth/access_token",
-  },
-};
-
-/**
- * OAuth Client for interacting with OAuth providers
+ * OAuth Client for interacting with OAuth providers using oauth4webapi
  */
 export class OAuthClient {
   private provider: Provider;
   private accessToken: string;
+  private client: oauth.Client;
+  private authorizationServer: oauth.AuthorizationServer;
 
   constructor(provider: Provider, accessToken: string) {
     this.provider = provider;
     this.accessToken = accessToken;
+    this.client = getClient(provider);
+    this.authorizationServer = getAuthorizationServer(provider);
   }
 
   /**
-   * Get token information from the provider
-   * Note: Not all providers support this endpoint (e.g., GitHub doesn't have a standard token info endpoint)
-   */
-  async getTokenInfo(): Promise<TokenInfo | null> {
-    const endpoint = PROVIDER_ENDPOINTS[this.provider].tokenInfo;
-
-    if (!endpoint) {
-      console.warn(
-        `Token info endpoint not available for provider: ${this.provider}`
-      );
-      return null;
-    }
-
-    try {
-      const response = await fetch(endpoint, {
-        headers: {
-          Authorization: `Bearer ${this.accessToken}`,
-          Accept: "application/json",
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(
-          `Failed to fetch token info: ${response.status} ${response.statusText}`
-        );
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error(`Error fetching token info for ${this.provider}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get user information from the provider
+   * Get user information from the provider using oauth4webapi
    */
   async getUserInfo(): Promise<UserInfo> {
-    const endpoint = PROVIDER_ENDPOINTS[this.provider].userInfo;
-
     try {
-      const headers: HeadersInit = {
-        Authorization: `Bearer ${this.accessToken}`,
-        Accept: "application/json",
-      };
+      const providerConfig = getProviderConfig(this.provider);
 
-      // GitHub requires specific Accept header
-      if (this.provider === "github") {
-        headers.Accept = "application/vnd.github+json";
-      }
-
-      const response = await fetch(endpoint, { headers });
-
-      if (!response.ok) {
-        throw new Error(
-          `Failed to fetch user info: ${response.status} ${response.statusText}`
+      // For providers with standard userinfo endpoint
+      if (this.authorizationServer.userinfo_endpoint) {
+        const response = await oauth.userInfoRequest(
+          this.authorizationServer,
+          this.client,
+          this.accessToken
         );
+
+        const userInfoResponse = await oauth.processUserInfoResponse(
+          this.authorizationServer,
+          this.client,
+          oauth.skipSubjectCheck, // Skip subject verification
+          response
+        );
+
+        return this.normalizeUserInfo(userInfoResponse);
       }
 
-      const data = await response.json();
-      return this.normalizeUserInfo(data);
+      // Fallback for providers without standard userinfo endpoint (e.g., GitHub)
+      if (providerConfig.userInfoEndpoint) {
+        const headers: HeadersInit = {
+          Authorization: `Bearer ${this.accessToken}`,
+          Accept:
+            this.provider === "github"
+              ? "application/vnd.github+json"
+              : "application/json",
+        };
+
+        const response = await fetch(providerConfig.userInfoEndpoint, {
+          headers,
+        });
+
+        if (!response.ok) {
+          throw new Error(
+            `Failed to fetch user info: ${response.status} ${response.statusText}`
+          );
+        }
+
+        const data = await response.json();
+        return this.normalizeUserInfo(data);
+      }
+
+      throw new Error(`No userinfo endpoint configured for ${this.provider}`);
     } catch (error) {
       console.error(`Error fetching user info for ${this.provider}:`, error);
       throw error;
@@ -181,49 +137,39 @@ export class OAuthClient {
   }
 
   /**
-   * Refresh the access token using a refresh token
+   * Refresh the access token using a refresh token with oauth4webapi
    */
   static async refreshAccessToken(
     provider: Provider,
     refreshToken: string
-  ): Promise<RefreshTokenResponse> {
-    const config = getOAuthConfig(provider);
-    const endpoint = PROVIDER_ENDPOINTS[provider].refreshToken;
+  ): Promise<oauth.TokenEndpointResponse> {
+    const client = getClient(provider);
+    const authorizationServer = getAuthorizationServer(provider);
 
     try {
-      const params = new URLSearchParams();
-      params.set("grant_type", "refresh_token");
-      params.set("refresh_token", refreshToken);
+      // Determine client authentication method
+      const clientSecret = String(client.client_secret);
+      const clientAuth =
+        client.token_endpoint_auth_method === "client_secret_post"
+          ? oauth.ClientSecretPost(clientSecret)
+          : oauth.ClientSecretBasic(clientSecret);
 
-      const headers: HeadersInit = {
-        "Content-Type": "application/x-www-form-urlencoded",
-      };
+      // Use oauth4webapi's refreshTokenGrantRequest
+      const response = await oauth.refreshTokenGrantRequest(
+        authorizationServer,
+        client,
+        clientAuth,
+        refreshToken
+      );
 
-      // Provider-specific authentication
-      if (provider === "supabase") {
-        headers.Authorization = `Basic ${btoa(
-          `${config.clientId}:${config.clientSecret}`
-        )}`;
-      } else if (provider === "github") {
-        headers.Accept = "application/json";
-        params.set("client_id", config.clientId);
-        params.set("client_secret", config.clientSecret);
-      }
+      // Process the response
+      const result = await oauth.processRefreshTokenResponse(
+        authorizationServer,
+        client,
+        response
+      );
 
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers,
-        body: params,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-          `Failed to refresh token: ${response.status} ${errorText}`
-        );
-      }
-
-      return await response.json();
+      return result;
     } catch (error) {
       console.error(`Error refreshing token for ${provider}:`, error);
       throw error;
@@ -242,23 +188,6 @@ export class OAuthClient {
     } catch {
       return false;
     }
-  }
-
-  /**
-   * Check if token is expired based on token info
-   * Returns null if expiry info is not available
-   */
-  async isTokenExpired(): Promise<boolean | null> {
-    const tokenInfo = await this.getTokenInfo();
-
-    if (!tokenInfo || !tokenInfo.expires_in) {
-      return null;
-    }
-
-    // expires_in is in seconds from when the token was issued
-    // This is a simplistic check - in production, you'd want to track
-    // when the token was issued and calculate from that
-    return false; // Would need additional logic to track issue time
   }
 }
 
