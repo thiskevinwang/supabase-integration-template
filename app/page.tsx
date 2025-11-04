@@ -1,4 +1,6 @@
 import { cookies } from "next/headers";
+
+import Link from "next/link";
 import { ConnectButton } from "./components/ConnectButton";
 import {
   Item,
@@ -14,7 +16,7 @@ import {
 } from "@/components/ui/item";
 
 import React from "react";
-import { VALID_PROVIDERS } from "@/lib/oauth-config";
+import { VALID_PROVIDERS, getProviderConfig } from "@/lib/oauth-config";
 
 export default async function Home() {
   const cookieStore = await cookies();
@@ -36,16 +38,14 @@ export default async function Home() {
 
   return (
     <div className="min-h-screen mx-5">
-      <div className="max-w-7xl mx-auto py-8 space-y-8">
+      <div className="mx-auto py-8 space-y-8">
         {/* Header */}
-        <div className="text-center space-y-4">
-          <h1 className="text-3xl sm:text-5xl md:text-6xl font-bold tracking-tighter">
-            OAuth Integrations
-          </h1>
-        </div>
+        <h1 className="text-3xl sm:text-5xl md:text-6xl font-bold tracking-tighter">
+          OAuth Integrations
+        </h1>
 
         {/* Integration Items */}
-        <ItemGroup className="border max-w-lg mx-auto">
+        <ItemGroup className="border mx-auto">
           {providerDataMap.map(
             ({ provider, accessToken, refreshToken }, i, arr) => {
               return (
@@ -55,7 +55,13 @@ export default async function Home() {
                     <ItemContent>
                       <ItemTitle>{provider}</ItemTitle>
                       <ItemDescription className="font-mono wrap-anywhere">
-                        {!accessToken ? "Not connected." : accessToken}
+                        {!accessToken
+                          ? "Not connected."
+                          : accessToken.replace(
+                              // mask all characters except first 7 and last 4
+                              /(.{7})(.*)(.{4})/,
+                              (_, p1, p2, p3) => p1 + "*".repeat(p2.length) + p3
+                            )}
                       </ItemDescription>
                     </ItemContent>
                     <ItemActions className="flex flex-col items-end">

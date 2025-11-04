@@ -1,14 +1,16 @@
 "server-only";
 import * as oauth from "oauth4webapi";
 
-export type Provider = "supabase" | "github" | "clerk" | "google";
-
 export const VALID_PROVIDERS = [
   "supabase",
   "github",
   "clerk",
   "google",
+  "slack",
+  "facebook",
 ] as const;
+
+export type Provider = (typeof VALID_PROVIDERS)[number];
 
 export function isValidProvider(provider: string): provider is Provider {
   return VALID_PROVIDERS.includes(provider as Provider);
@@ -22,10 +24,10 @@ interface ProviderConfig {
   scope?: string;
   usePKCE: boolean;
   cookiePrefix: string;
-  userInfoEndpoint?: string;
 }
 
 /**
+ * MARK: Client
  * Get oauth4webapi Client configuration
  */
 export function getClient(provider: Provider): oauth.Client {
@@ -54,12 +56,25 @@ export function getClient(provider: Provider): oauth.Client {
         client_secret: process.env.GOOGLE_CLIENT_SECRET!,
         token_endpoint_auth_method: "client_secret_post",
       };
+    case "slack":
+      return {
+        client_id: process.env.SLACK_CLIENT_ID!,
+        client_secret: process.env.SLACK_CLIENT_SECRET!,
+        token_endpoint_auth_method: "client_secret_post",
+      };
+    case "facebook":
+      return {
+        client_id: process.env.FACEBOOK_CLIENT_ID!,
+        client_secret: process.env.FACEBOOK_CLIENT_SECRET!,
+        token_endpoint_auth_method: "client_secret_post",
+      };
     default:
       throw new Error(`Unsupported provider: ${provider}`);
   }
 }
 
 /**
+ * MARK: Authorization Server
  * Get oauth4webapi AuthorizationServer configuration
  */
 export function getAuthorizationServer(
@@ -72,6 +87,8 @@ export function getAuthorizationServer(
         authorization_endpoint:
           process.env.SUPABASE_OAUTH_AUTHORIZATION_ENDPOINT!,
         token_endpoint: process.env.SUPABASE_OAUTH_TOKEN_ENDPOINT!,
+        revocation_endpoint: process.env.SUPABASE_OAUTH_REVOCATION_ENDPOINT!,
+        userinfo_endpoint: process.env.SUPABASE_OAUTH_USERINFO_ENDPOINT,
       };
     case "github":
       return {
@@ -79,12 +96,15 @@ export function getAuthorizationServer(
         authorization_endpoint:
           process.env.GITHUB_OAUTH_AUTHORIZATION_ENDPOINT!,
         token_endpoint: process.env.GITHUB_OAUTH_TOKEN_ENDPOINT!,
+        revocation_endpoint: process.env.GITHUB_OAUTH_REVOCATION_ENDPOINT!,
+        userinfo_endpoint: process.env.GITHUB_OAUTH_USERINFO_ENDPOINT,
       };
     case "clerk":
       return {
         issuer: process.env.CLERK_OAUTH_ISSUER!,
         authorization_endpoint: process.env.CLERK_OAUTH_AUTHORIZATION_ENDPOINT!,
         token_endpoint: process.env.CLERK_OAUTH_TOKEN_ENDPOINT!,
+        revocation_endpoint: process.env.CLERK_OAUTH_REVOCATION_ENDPOINT!,
         userinfo_endpoint: process.env.CLERK_OAUTH_USERINFO_ENDPOINT,
       };
     case "google":
@@ -94,6 +114,22 @@ export function getAuthorizationServer(
           process.env.GOOGLE_OAUTH_AUTHORIZATION_ENDPOINT!,
         token_endpoint: process.env.GOOGLE_OAUTH_TOKEN_ENDPOINT!,
         userinfo_endpoint: process.env.GOOGLE_OAUTH_USERINFO_ENDPOINT,
+      };
+    case "slack":
+      return {
+        issuer: process.env.SLACK_OAUTH_ISSUER!,
+        authorization_endpoint: process.env.SLACK_OAUTH_AUTHORIZATION_ENDPOINT!,
+        token_endpoint: process.env.SLACK_OAUTH_TOKEN_ENDPOINT!,
+        userinfo_endpoint: process.env.SLACK_OAUTH_USERINFO_ENDPOINT,
+      };
+    case "facebook":
+      return {
+        issuer: process.env.FACEBOOK_OAUTH_ISSUER!,
+        authorization_endpoint:
+          process.env.FACEBOOK_OAUTH_AUTHORIZATION_ENDPOINT!,
+        token_endpoint: process.env.FACEBOOK_OAUTH_TOKEN_ENDPOINT!,
+        revocation_endpoint: process.env.FACEBOOK_OAUTH_REVOCATION_ENDPOINT!,
+        userinfo_endpoint: process.env.FACEBOOK_OAUTH_USERINFO_ENDPOINT,
       };
     default:
       throw new Error(`Unsupported provider: ${provider}`);
@@ -110,7 +146,6 @@ export function getProviderConfig(provider: Provider): ProviderConfig {
         redirectUri: process.env.SUPABASE_REDIRECT_URI!,
         usePKCE: true,
         cookiePrefix: "supabase_",
-        userInfoEndpoint: "https://api.supabase.com/v1/oauth/userinfo",
       };
     case "github":
       return {
@@ -118,7 +153,6 @@ export function getProviderConfig(provider: Provider): ProviderConfig {
         scope: "read:user read:org",
         usePKCE: false,
         cookiePrefix: "github_",
-        userInfoEndpoint: "https://api.github.com/user",
       };
     case "clerk":
       return {
@@ -134,10 +168,26 @@ export function getProviderConfig(provider: Provider): ProviderConfig {
         usePKCE: true,
         cookiePrefix: "google_",
       };
+    case "slack":
+      return {
+        redirectUri: process.env.SLACK_REDIRECT_URI!,
+        scope: "users:read",
+        usePKCE: false,
+        cookiePrefix: "slack_",
+      };
+    case "facebook":
+      return {
+        redirectUri: process.env.FACEBOOK_REDIRECT_URI!,
+        scope: "public_profile",
+        usePKCE: false,
+        cookiePrefix: "facebook_",
+      };
     default:
       throw new Error(`Unsupported provider: ${provider}`);
   }
 }
+
+// MARK: Utils
 
 /**
  * Utility functions using oauth4webapi

@@ -57,8 +57,6 @@ export async function GET(
     );
   }
 
-  console.log("authParams", authParams);
-
   // MARK: Exchange authorization code for tokens
   const code = authParams.get("code");
   if (!code) {
@@ -99,29 +97,42 @@ export async function GET(
       codeVerifier || oauth.nopkce,
       {
         [oauth.customFetch](url, options) {
-          console.log("Token request fetch args:", url, options);
+          console.log("Token request fetch args:\n", url, options);
+          console.log(
+            `Basic ${btoa(`${client.client_id}:${client.client_secret}`)}`
+          );
           return fetch(url, {
             ...options,
             headers: {
-              // ...options?.headers,
-              Accept: "application/json",
-              Authorization: `Basic ${btoa(
-                `${client.client_id}:${client.client_secret}`
-              )}`,
-              "Content-Type": "application/x-www-form-urlencoded",
-              "User-Agent": "supabase-integration-template",
+              // RFC 6749 Section 2.3.1 states that the clientID and password
+              // are to be encoded via "application/x-www-form-urlencoded".
+              // Supabase doesn't seem to comply with that, so base64 encode the plan strings instead.
+              ...(provider === "supabase"
+                ? {
+                    Accept: "application/json",
+                    Authorization: `Basic ${btoa(
+                      `${client.client_id}:${client.client_secret}`
+                    )}`,
+                    "Content-Type": "application/x-www-form-urlencoded",
+                  }
+                : {
+                    ...options?.headers,
+                  }),
             },
           });
         },
       }
     );
 
-    // Supabase violates
-    if (tokenResponse.status === 201) {
-      tokenResponse = new Response(tokenResponse.body, {
-        ...tokenResponse,
-        status: 200,
-      });
+    // Unlike the 200 status as specified in RFC 6749, some providers (e.g., GitHub)
+    // Supabase returns 201 instead
+    if (provider === "supabase") {
+      if (tokenResponse.status === 201) {
+        tokenResponse = new Response(tokenResponse.body, {
+          ...tokenResponse,
+          status: 200,
+        });
+      }
     }
 
     // Validates Authorization Code Grant Response instance to be one coming from the as.token\_endpoint.
