@@ -1,3 +1,5 @@
+![Screenshot](./docs/oauth.jpg)
+
 # OAuth
 
 ```
