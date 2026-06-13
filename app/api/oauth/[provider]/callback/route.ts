@@ -4,13 +4,12 @@ import {
   getClient,
   getAuthorizationServer,
   getProviderConfig,
-  Provider,
   isValidProvider,
 } from "@/lib/oauth-config";
 
 export async function GET(
   request: NextRequest,
-  { params: routeParams }: { params: Promise<{ provider: Provider }> }
+  { params: routeParams }: { params: Promise<{ provider: string }> }
 ) {
   const { provider } = await routeParams;
 
@@ -85,13 +84,20 @@ export async function GET(
     // Step 3: Make token request using oauth4webapi
     // Performs an Authorization Code grant request at the as.token\_endpoint.
     // https://github.com/panva/oauth4webapi/blob/main/docs/functions/authorizationCodeGrantRequest.md
-    const clientSecret = String(client.client_secret);
+
+    // Determine client authentication method (public client or confidential client)
+    let clientAuth: oauth.ClientAuth | undefined = oauth.None();
+    if (client.client_secret && client.client_secret !== "fake") {
+      const clientSecret = String(client.client_secret);
+      clientAuth = client.token_endpoint_auth_method === "client_secret_post"
+        ? oauth.ClientSecretPost(clientSecret)
+        : oauth.ClientSecretBasic(clientSecret);
+    }
+
     let tokenResponse = await oauth.authorizationCodeGrantRequest(
       _as,
       client,
-      client.token_endpoint_auth_method === "client_secret_post"
-        ? oauth.ClientSecretPost(clientSecret)
-        : oauth.ClientSecretBasic(clientSecret),
+      clientAuth,
       authParams,
       providerConfig.redirectUri,
       codeVerifier || oauth.nopkce,
